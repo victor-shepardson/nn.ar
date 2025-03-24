@@ -289,11 +289,102 @@ NNUGen::NNUGen():
 
   Debug("NNUGen: use thread %d\n", m_useThread);
   int warmup = static_cast<int>(in0(UGenInputs::warmup));
-  if (m_useThread)
-    m_sharedData->m_compute_thread = new std::thread(model_perform_loop, m_sharedData, warmup);
-  else
-    model_perform_load(m_sharedData, warmup);
+  if (m_useThread) {
+    m_sharedData->m_compute_thread = new std::thread(
+      model_perform_loop, m_sharedData, warmup);
 
+    ///// set realtime priority on macOS
+    pthread_t pthreadHandle = m_sharedData->m_compute_thread->native_handle();
+    // Set scheduling policy to SCHED_RR (Round Robin)
+    // struct sched_param param;
+    // int policy;  // Round-robin scheduling policy
+    // // Get current priority (to avoid resetting it)
+    // if (pthread_getschedparam(pthreadHandle, &policy, &param) != 0) {
+    //     std::cerr << "Failed to get thread scheduling parameters\n";
+    //     // return;
+    //   }
+    //   // param.sched_priority = sched_get_priority_max(SCHED_RR);
+    //   std::cout << "inherited priorty: " << param.sched_priority << std::endl;
+      
+    //   policy = SCHED_RR;
+      
+    //   if (pthread_setschedparam(pthreadHandle, policy, &param) != 0) {
+    //         std::cerr << "Failed to set thread scheduling policy\n";
+    //   } else {
+    //         std::cout << "Successfully set thread scheduling policy to SCHED_RR\n";
+    //   }
+    
+    thread_port_t mach_thread = pthread_mach_thread_np(pthreadHandle);
+    int result;
+    
+    //https://github.com/apple/darwin-xnu/blob/main/osfmk/mach/thread_policy.h
+    //https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/KernelProgramming/scheduler/scheduler.html
+
+    struct thread_time_constraint_policy ttcpolicy;
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    // int HZ = timebase.numer / timebase.denom;
+    int HZ = (1e9 * timebase.denom) / timebase.numer;
+    // ???:
+    ttcpolicy.period = HZ*128/48000; // HZ/160  
+    ttcpolicy.computation = HZ*96/48000; // HZ/3300;
+    ttcpolicy.constraint = HZ*120/48000; // HZ/2200;
+    ttcpolicy.preemptible = 1;
+    // // almost works:
+    // ttcpolicy.period = HZ*128/48000; // HZ/160  
+    // ttcpolicy.computation = HZ*100/48000; // HZ/3300;
+    // ttcpolicy.constraint = HZ*127/48000; // HZ/2200;
+    // ttcpolicy.preemptible = 1;
+    // // doesn't work:
+    // ttcpolicy.period = HZ*128/48000; // HZ/160  
+    // ttcpolicy.computation = HZ*127/48000; // HZ/3300;
+    // ttcpolicy.constraint = HZ*256/48000; // HZ/2200;
+    // ttcpolicy.preemptible = 0;
+    if ((result=thread_policy_set(mach_thread,
+      THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&ttcpolicy,
+      THREAD_TIME_CONSTRAINT_POLICY_COUNT)) != KERN_SUCCESS) {
+        std::cerr << "thread_policy_set failed.\n";
+    }
+
+    std::cout << HZ << ", " << ttcpolicy.period << ", " << ttcpolicy.computation << ", " << ttcpolicy.constraint << std::endl;
+
+    // thread_extended_policy_data_t timeShareData;
+    thread_precedence_policy_data_t precedenceData;
+
+    // memset(&precedenceData, 0, sizeof(thread_precedence_policy_data_t));
+    // boolean_t fetchDefaults = false;
+    // mach_msg_type_number_t structItemCount;
+    // structItemCount = THREAD_PRECEDENCE_POLICY_COUNT;
+    // result = thread_policy_get(
+    //   pthread_mach_thread_np(pthread_self()), 
+    //   THREAD_PRECEDENCE_POLICY, (integer_t*)&precedenceData, 
+    //   &structItemCount, &fetchDefaults);
+    // if (0 != result)
+    //   std::cerr << "thread_policy_get failed.\n";
+      
+    // std::cout << "inherited priority " << precedenceData.importance << std::endl;
+
+    // timeShareData.timeshare = false;
+    // // Set the scheduling flavor first, since it can alter the priority
+    // result = thread_policy_set(
+    //   mach_thread, THREAD_EXTENDED_POLICY, (integer_t*)&timeShareData, THREAD_EXTENDED_POLICY_COUNT);    
+      
+    //   if (0 != result)
+    //   std::cerr << "thread_policy_set THREAD_EXTENDED_POLICY failed.\n";
+      
+    // precedenceData.importance = 97;
+    // // Now set the priority
+    // result = thread_policy_set(
+    //   mach_thread, THREAD_PRECEDENCE_POLICY, (integer_t*)&precedenceData,
+    //   THREAD_PRECEDENCE_POLICY_COUNT);
+
+    if (0 != result)
+      std::cerr << "thread_policy_set THREAD_PRECEDENCE_POLICY failed.\n";
+  }
+  else {
+    model_perform_load(m_sharedData, warmup);
+  }
+  
   Debug("NNUGen: setupAttributes\n", m_useThread);
   setupAttributes();
 

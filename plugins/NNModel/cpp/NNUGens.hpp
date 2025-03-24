@@ -9,6 +9,11 @@
 #include <semaphore>
 #include <string>
 #include <thread>
+#include <pthread.h>
+#include <sched.h>
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <mach/mach_time.h>
 
 namespace NN {
 
